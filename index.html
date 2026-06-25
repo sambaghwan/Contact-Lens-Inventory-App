@@ -3889,6 +3889,841 @@ function exportSalesExcel() {
     XLSX.writeFile(wb, 'sales_export.xlsx');
     showToast('success', 'Exported', `${data.length} sales exported as Excel`);
 }
+   /* ═══════════════════════════════════════════════════════════════
+   REPORTS MODULE
+   ═══════════════════════════════════════════════════════════════ */
+
+const ReportState = {
+    inventory: [],
+    sales: [],
+    suppliers: [],
+    transactions: [],
+    activeReport: null,
+    chartInstance: null
+};
+
+/* --- Main render entry point --- */
+async function renderReports() {
+    const content = $('#page-content');
+    content.innerHTML = `
+        <div class="page-header">
+            <h1 class="page-title">Reports</h1>
+            <p class="page-desc">Generate and export detailed inventory, sales, and supplier reports</p>
+        </div>
+        <div id="report-cards-section">
+            <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-bottom:24px">
+                <div class="skeleton skeleton-card" style="height:160px"></div>
+                <div class="skeleton skeleton-card" style="height:160px"></div>
+                <div class="skeleton skeleton-card" style="height:160px"></div>
+                <div class="skeleton skeleton-card" style="height:160px"></div>
+                <div class="skeleton skeleton-card" style="height:160px"></div>
+                <div class="skeleton skeleton-card" style="height:160px"></div>
+            </div>
+        </div>
+        <div id="report-output" class="hidden"></div>
+    `;
+
+    try {
+        const [inv, sales, sup, txn] = await Promise.all([
+            db.getInventory({}),
+            db.getSales({}),
+            db.getSuppliers(),
+            db.getTransactions({})
+        ]);
+        ReportState.inventory = inv;
+        ReportState.sales = sales;
+        ReportState.suppliers = sup;
+        ReportState.transactions = txn;
+    } catch (err) {
+        console.error('Report data load error:', err);
+    }
+
+    renderReportCards();
+}
+
+/* --- Report selection cards --- */
+function renderReportCards() {
+    const inv = ReportState.inventory;
+    const sales = ReportState.sales;
+    const lowStock = inv.filter(l => l.quantityInStock <= l.reorderLevel).length;
+    const outOfStock = inv.filter(l => l.quantityInStock === 0).length;
+    const expiring30 = inv.filter(l => { const d = daysUntil(l.expiryDate); return d >= 0 && d <= 30; }).length;
+    const expiring90 = inv.filter(l => { const d = daysUntil(l.expiryDate); return d >= 0 && d <= 90; }).length;
+    const totalValue = inv.reduce((s, l) => s + (l.sellingPrice * l.quantityInStock), 0);
+    const totalCostValue = inv.reduce((s, l) => s + (l.costPrice * l.quantityInStock), 0);
+
+    const cards = [
+        {
+            icon: 'fa-boxes-stacked', color: 'teal', bg: 'var(--accent-light)',
+            title: 'Current Stock Report',
+            desc: `Full inventory overview — ${inv.length} lens types valued at ${formatCurrency(totalValue)}`,
+            onClick: 'showCurrentStockReport'
+        },
+        {
+            icon: 'fa-exclamation-triangle', color: 'amber', bg: 'var(--gold-light)',
+            title: 'Low Stock Report',
+            desc: `${lowStock} items below reorder level, ${outOfStock} out of stock`,
+            onClick: 'showLowStockReport'
+        },
+        {
+            icon: 'fa-clock', color: 'red', bg: 'var(--danger-light)',
+            title: 'Expiry Report',
+            desc: `${expiring30} expiring within 30 days, ${expiring90} within 90 days`,
+            onClick: 'showExpiryReport'
+        },
+        {
+            icon: 'fa-chart-line', color: 'green', bg: 'var(--success-light)',
+            title: 'Sales Analysis',
+            desc: `${sales.length} total sales with revenue trends and breakdowns`,
+            onClick: 'showSalesAnalysisReport'
+        },
+        {
+            icon: 'fa-truck', color: 'cyan', bg: 'var(--info-light)',
+            title: 'Supplier Performance',
+            desc: `${ReportState.suppliers.length} suppliers — stock value at cost: ${formatCurrency(totalCostValue)}`,
+            onClick: 'showSupplierPerformanceReport'
+        },
+        {
+            icon: 'fa-exchange-alt', color: 'teal', bg: 'var(--accent-light)',
+            title: 'Stock Movement Report',
+            desc: `${ReportState.transactions.length} transactions with type breakdown`,
+            onClick: 'showStockMovementReport'
+        }
+    ];
+
+    $('#report-cards-section').innerHTML = `
+        <div class="report-grid">
+            ${cards.map((c, i) => `
+                <div class="report-card" style="animation:fadeUp 0.4s ease ${i * 0.06}s both" onclick="${c.onClick}()">
+                    <div class="report-card-icon" style="background:${c.bg};color:var(--${c.color})">
+                        <i class="fas ${c.icon}"></i>
+                    </div>
+                    <div class="report-card-title">${c.title}</div>
+                    <div class="report-card-desc">${c.desc}</div>
+                    <div class="report-card-actions">
+                        <button class="btn btn-primary btn-sm"><i class="fas fa-arrow-right"></i> Generate</button>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+    $('#report-output').classList.add('hidden');
+    $('#report-output').innerHTML = '';
+}
+
+/* --- Helper: show report output, hide cards --- */
+function showReportOutput(title, bodyHtml) {
+    $('#report-cards-section').classList.add('hidden');
+    const output = $('#report-output');
+    output.classList.remove('hidden');
+    output.innerHTML = `
+        <div class="page-section">
+            <div class="flex items-center gap-3" style="margin-bottom:20px">
+                <button class="btn btn-ghost btn-sm" onclick="backToReportCards()"><i class="fas fa-arrow-left"></i> Back</button>
+                <h2 style="font-size:1.25rem;font-weight:700;flex:1">${title}</h2>
+                <button class="btn btn-secondary btn-sm" onclick="exportCurrentReportCSV()"><i class="fas fa-file-csv"></i> CSV</button>
+                <button class="btn btn-secondary btn-sm" onclick="exportCurrentReportExcel()"><i class="fas fa-file-excel"></i> Excel</button>
+                <button class="btn btn-secondary btn-sm" onclick="printCurrentReport()"><i class="fas fa-print"></i> Print</button>
+            </div>
+            <div id="report-body-content">${bodyHtml}</div>
+        </div>
+    `;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function backToReportCards() {
+    if (ReportState.chartInstance) { ReportState.chartInstance.destroy(); ReportState.chartInstance = null; }
+    renderReportCards();
+    $('#report-output').classList.add('hidden');
+}
+
+/* ─────────────────────────────────────────────
+   1. CURRENT STOCK REPORT
+   ───────────────────────────────────────────── */
+function showCurrentStockReport() {
+    const inv = ReportState.inventory;
+    const totalStock = inv.reduce((s, l) => s + l.quantityInStock, 0);
+    const totalSellValue = inv.reduce((s, l) => s + (l.sellingPrice * l.quantityInStock), 0);
+    const totalCostValue = inv.reduce((s, l) => s + (l.costPrice * l.quantityInStock), 0);
+    const potentialProfit = totalSellValue - totalCostValue;
+
+    const body = `
+        <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:20px">
+            <div class="kpi-card"><div class="kpi-icon teal"><i class="fas fa-eye"></i></div><div class="kpi-value">${inv.length}</div><div class="kpi-label">Lens Types</div></div>
+            <div class="kpi-card"><div class="kpi-icon cyan"><i class="fas fa-box"></i></div><div class="kpi-value">${totalStock.toLocaleString()}</div><div class="kpi-label">Total Units</div></div>
+            <div class="kpi-card"><div class="kpi-icon green"><i class="fas fa-dollar-sign"></i></div><div class="kpi-value">${formatCurrency(totalSellValue)}</div><div class="kpi-label">Sell Value</div></div>
+            <div class="kpi-card"><div class="kpi-icon amber"><i class="fas fa-coins"></i></div><div class="kpi-value">${formatCurrency(totalCostValue)}</div><div class="kpi-label">Cost Value</div></div>
+            <div class="kpi-card"><div class="kpi-icon teal"><i class="fas fa-chart-line"></i></div><div class="kpi-value">${formatCurrency(potentialProfit)}</div><div class="kpi-label">Potential Profit</div></div>
+        </div>
+        <div id="report-chart-area" style="margin-bottom:20px"><canvas id="report-chart" height="280"></canvas></div>
+        ${buildInventoryTable(inv, 'All Lenses')}
+    `;
+    showReportOutput('Current Stock Report', body);
+    renderStockByBrandChart(inv);
+    ReportState.activeReport = {
+        name: 'Current Stock Report',
+        getCSV: () => {
+            const h = ['Brand','Type','Power','Cylinder','Axis','BC','DIA','Side','Stock','Reorder','Cost','Selling','Supplier','Batch','Expiry'];
+            const r = inv.map(l => [l.brandName,l.lensType,l.power||'',l.cylinder||'',l.axis||'',l.baseCurve||'',l.diameter||'',l.eyeSide||'',l.quantityInStock,l.reorderLevel,l.costPrice,l.sellingPrice,l.supplierName||'',l.batchNumber||'',l.expiryDate||'']);
+            return [h,...r];
+        }
+    };
+}
+
+/* ─────────────────────────────────────────────
+   2. LOW STOCK REPORT
+   ───────────────────────────────────────────── */
+function showLowStockReport() {
+    const inv = ReportState.inventory.filter(l => l.quantityInStock <= l.reorderLevel);
+    const outOfStock = inv.filter(l => l.quantityInStock === 0);
+    const lowButAvailable = inv.filter(l => l.quantityInStock > 0 && l.quantityInStock <= l.reorderLevel);
+    const totalNeeded = inv.reduce((s, l) => s + (l.reorderLevel - l.quantityInStock), 0);
+    const costToReorder = inv.reduce((s, l) => s + ((l.reorderLevel - l.quantityInStock) * l.costPrice), 0);
+
+    const body = `
+        <div class="alerts-bar" style="margin-bottom:16px">
+            ${outOfStock.length ? `<div class="alert-chip red"><i class="fas fa-times-circle"></i> ${outOfStock.length} Out of Stock</div>` : ''}
+            ${lowButAvailable.length ? `<div class="alert-chip amber"><i class="fas fa-exclamation-triangle"></i> ${lowButAvailable.length} Below Reorder Level</div>` : ''}
+        </div>
+        <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:20px">
+            <div class="kpi-card"><div class="kpi-icon red"><i class="fas fa-times-circle"></i></div><div class="kpi-value">${outOfStock.length}</div><div class="kpi-label">Out of Stock</div></div>
+            <div class="kpi-card"><div class="kpi-icon amber"><i class="fas fa-exclamation-triangle"></i></div><div class="kpi-value">${lowButAvailable.length}</div><div class="kpi-label">Low Stock</div></div>
+            <div class="kpi-card"><div class="kpi-icon cyan"><i class="fas fa-box"></i></div><div class="kpi-value">${totalNeeded.toLocaleString()}</div><div class="kpi-label">Units to Reorder</div></div>
+            <div class="kpi-card"><div class="kpi-icon green"><i class="fas fa-dollar-sign"></i></div><div class="kpi-value">${formatCurrency(costToReorder)}</div><div class="kpi-label">Cost to Reorder</div></div>
+        </div>
+        ${inv.length ? buildInventoryTable(inv, 'Low Stock Items') : '<div class="empty-state"><div class="empty-state-icon"><i class="fas fa-check-circle"></i></div><div class="empty-state-title">All Stock Levels Healthy</div><div class="empty-state-desc">No items are currently below their reorder level</div></div>'}
+    `;
+    showReportOutput('Low Stock Report', body);
+    ReportState.activeReport = {
+        name: 'Low Stock Report',
+        getCSV: () => {
+            const h = ['Brand','Type','Power','Current Stock','Reorder Level','Shortage','Cost to Reorder','Supplier','Status'];
+            const r = inv.map(l => {
+                const shortage = Math.max(0, l.reorderLevel - l.quantityInStock);
+                return [l.brandName,l.lensType,l.power||'',l.quantityInStock,l.reorderLevel,shortage,(shortage*l.costPrice).toFixed(2),l.supplierName||'',l.quantityInStock===0?'Out of Stock':'Low Stock'];
+            });
+            return [h,...r];
+        }
+    };
+}
+
+/* ─────────────────────────────────────────────
+   3. EXPIRY REPORT
+   ───────────────────────────────────────────── */
+function showExpiryReport() {
+    const inv = ReportState.inventory.filter(l => l.expiryDate && daysUntil(l.expiryDate) >= 0);
+    const exp30 = inv.filter(l => daysUntil(l.expiryDate) <= 30);
+    const exp90 = inv.filter(l => { const d = daysUntil(l.expiryDate); return d > 30 && d <= 90; });
+    const expLater = inv.filter(l => daysUntil(l.expiryDate) > 90);
+    const expValue30 = exp30.reduce((s, l) => s + (l.costPrice * l.quantityInStock), 0);
+
+    const body = `
+        <div class="alerts-bar" style="margin-bottom:16px">
+            ${exp30.length ? `<div class="alert-chip red"><i class="fas fa-clock"></i> ${exp30.length} Expiring within 30 Days — ${formatCurrency(expValue30)} at risk</div>` : ''}
+            ${exp90.length ? `<div class="alert-chip amber"><i class="fas fa-clock"></i> ${exp90.length} Expiring within 90 Days</div>` : ''}
+        </div>
+        <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:20px">
+            <div class="kpi-card"><div class="kpi-icon red"><i class="fas fa-clock"></i></div><div class="kpi-value">${exp30.length}</div><div class="kpi-label">Expiring ≤ 30 days</div></div>
+            <div class="kpi-card"><div class="kpi-icon amber"><i class="fas fa-clock"></i></div><div class="kpi-value">${exp90.length}</div><div class="kpi-label">Expiring 31–90 days</div></div>
+            <div class="kpi-card"><div class="kpi-icon green"><i class="fas fa-check-circle"></i></div><div class="kpi-value">${expLater.length}</div><div class="kpi-label">Expiring > 90 days</div></div>
+            <div class="kpi-card"><div class="kpi-icon teal"><i class="fas fa-dollar-sign"></i></div><div class="kpi-value">${formatCurrency(expValue30)}</div><div class="kpi-label">At-Risk Value (30d)</div></div>
+        </div>
+        <div id="report-chart-area" style="margin-bottom:20px"><canvas id="report-chart" height="260"></canvas></div>
+        ${buildExpiryTable(inv)}
+    `;
+    showReportOutput('Expiry Report', body);
+    renderExpiryChart(inv);
+    ReportState.activeReport = {
+        name: 'Expiry Report',
+        getCSV: () => {
+            const h = ['Brand','Type','Batch','Expiry Date','Days Remaining','Stock','Cost Value','Risk Level'];
+            const r = inv.map(l => {
+                const days = daysUntil(l.expiryDate);
+                const risk = days <= 30 ? 'Critical' : days <= 90 ? 'Warning' : 'OK';
+                return [l.brandName,l.lensType,l.batchNumber||'',l.expiryDate||'',days,l.quantityInStock,(l.costPrice*l.quantityInStock).toFixed(2),risk];
+            });
+            return [h,...r];
+        }
+    };
+}
+
+/* ─────────────────────────────────────────────
+   4. SALES ANALYSIS REPORT
+   ───────────────────────────────────────────── */
+function showSalesAnalysisReport() {
+    const sales = ReportState.sales;
+    const totalRevenue = sales.reduce((s, x) => s + x.totalAmount, 0);
+    const totalUnits = sales.reduce((s, x) => s + x.quantitySold, 0);
+    const avgOrder = sales.length ? totalRevenue / sales.length : 0;
+    const uniqueCustomers = [...new Set(sales.map(s => s.customerName))].length;
+
+    /* Daily breakdown for last 14 days */
+    const dailyData = [];
+    for (let i = 13; i >= 0; i--) {
+        const d = new Date(); d.setDate(d.getDate() - i);
+        const key = d.toISOString().split('T')[0];
+        const daySales = sales.filter(s => s.saleDate.startsWith(key));
+        dailyData.push({
+            label: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+            orders: daySales.length,
+            revenue: daySales.reduce((s, x) => s + x.totalAmount, 0)
+        });
+    }
+
+    /* Weekly breakdown for last 8 weeks */
+    const weeklyData = [];
+    for (let i = 7; i >= 0; i--) {
+        const weekEnd = new Date(); weekEnd.setDate(weekEnd.getDate() - i * 7);
+        const weekStart = new Date(weekEnd); weekStart.setDate(weekStart.getDate() - 6);
+        const wSales = sales.filter(s => {
+            const sd = new Date(s.saleDate);
+            return sd >= weekStart && sd <= weekEnd;
+        });
+        weeklyData.push({
+            label: `${weekStart.toLocaleDateString('en-US',{month:'short',day:'numeric'})}–${weekEnd.toLocaleDateString('en-US',{month:'short',day:'numeric'})}`,
+            orders: wSales.length,
+            revenue: wSales.reduce((s, x) => s + x.totalAmount, 0),
+            units: wSales.reduce((s, x) => s + x.quantitySold, 0)
+        });
+    }
+
+    /* Monthly breakdown for last 6 months */
+    const monthlyData = [];
+    for (let i = 5; i >= 0; i--) {
+        const d = new Date(); d.setMonth(d.getMonth() - i);
+        const key = d.toISOString().slice(0, 7);
+        const mSales = sales.filter(s => s.saleDate.startsWith(key));
+        monthlyData.push({
+            label: d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+            key,
+            orders: mSales.length,
+            revenue: mSales.reduce((s, x) => s + x.totalAmount, 0),
+            units: mSales.reduce((s, x) => s + x.quantitySold, 0)
+        });
+    }
+
+    const body = `
+        <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:20px">
+            <div class="kpi-card"><div class="kpi-icon green"><i class="fas fa-dollar-sign"></i></div><div class="kpi-value">${formatCurrency(totalRevenue)}</div><div class="kpi-label">Total Revenue</div></div>
+            <div class="kpi-card"><div class="kpi-icon teal"><i class="fas fa-receipt"></i></div><div class="kpi-value">${sales.length}</div><div class="kpi-label">Total Orders</div></div>
+            <div class="kpi-card"><div class="kpi-icon cyan"><i class="fas fa-box"></i></div><div class="kpi-value">${totalUnits.toLocaleString()}</div><div class="kpi-label">Units Sold</div></div>
+            <div class="kpi-card"><div class="kpi-icon amber"><i class="fas fa-users"></i></div><div class="kpi-value">${uniqueCustomers}</div><div class="kpi-label">Unique Customers</div></div>
+            <div class="kpi-card"><div class="kpi-icon teal"><i class="fas fa-calculator"></i></div><div class="kpi-value">${formatCurrency(avgOrder)}</div><div class="kpi-label">Avg Order Value</div></div>
+        </div>
+
+        <!-- Period toggles -->
+        <div class="flex gap-2" style="margin-bottom:16px">
+            <button class="btn btn-primary btn-sm" id="sales-period-daily" onclick="switchSalesPeriod('daily')">Daily (14d)</button>
+            <button class="btn btn-secondary btn-sm" id="sales-period-weekly" onclick="switchSalesPeriod('weekly')">Weekly (8w)</button>
+            <button class="btn btn-secondary btn-sm" id="sales-period-monthly" onclick="switchSalesPeriod('monthly')">Monthly (6m)</button>
+        </div>
+
+        <div id="report-chart-area" style="margin-bottom:20px"><canvas id="report-chart" height="300"></canvas></div>
+
+        <!-- Monthly table -->
+        <h3 style="font-size:1rem;font-weight:600;margin-bottom:12px">Monthly Summary</h3>
+        <div class="table-container" style="margin-bottom:20px">
+            <div class="table-scroll">
+                <table>
+                    <thead><tr><th>Month</th><th>Orders</th><th>Units</th><th>Revenue</th><th>Avg Order</th></tr></thead>
+                    <tbody>
+                        ${monthlyData.map(m => `<tr>
+                            <td style="font-weight:500">${m.label}</td>
+                            <td>${m.orders}</td>
+                            <td>${m.units}</td>
+                            <td style="font-weight:600;color:var(--success)">${formatCurrency(m.revenue)}</td>
+                            <td>${m.orders ? formatCurrency(m.revenue / m.orders) : '—'}</td>
+                        </tr>`).join('')}
+                        <tr style="background:var(--bg-tertiary);font-weight:700">
+                            <td>Total</td>
+                            <td>${sales.length}</td>
+                            <td>${totalUnits}</td>
+                            <td style="color:var(--success)">${formatCurrency(totalRevenue)}</td>
+                            <td>${formatCurrency(avgOrder)}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Top customers -->
+        <h3 style="font-size:1rem;font-weight:600;margin-bottom:12px">Top Customers</h3>
+        ${buildTopCustomersTable(sales)}
+    `;
+    showReportOutput('Sales Analysis Report', body);
+
+    /* Store chart data for period switching */
+    ReportState._salesDaily = dailyData;
+    ReportState._salesWeekly = weeklyData;
+    ReportState._salesMonthly = monthlyData;
+    renderSalesChart(dailyData, 'Daily Revenue (Last 14 Days)');
+
+    ReportState.activeReport = {
+        name: 'Sales Analysis Report',
+        getCSV: () => {
+            const h = ['Month','Orders','Units','Revenue','Avg Order'];
+            const r = monthlyData.map(m => [m.label, m.orders, m.units, m.revenue.toFixed(2), m.orders ? (m.revenue/m.orders).toFixed(2) : '0']);
+            return [h,...r];
+        }
+    };
+}
+
+function switchSalesPeriod(period) {
+    ['daily','weekly','monthly'].forEach(p => {
+        const btn = document.getElementById('sales-period-' + p);
+        if (btn) { btn.className = p === period ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'; }
+    });
+    const dataMap = { daily: ReportState._salesDaily, weekly: ReportState._salesWeekly, monthly: ReportState._salesMonthly };
+    const titleMap = { daily: 'Daily Revenue (Last 14 Days)', weekly: 'Weekly Revenue (Last 8 Weeks)', monthly: 'Monthly Revenue (Last 6 Months)' };
+    if (dataMap[period]) renderSalesChart(dataMap[period], titleMap[period]);
+}
+
+/* ─────────────────────────────────────────────
+   5. SUPPLIER PERFORMANCE REPORT
+   ───────────────────────────────────────────── */
+function showSupplierPerformanceReport() {
+    const inv = ReportState.inventory;
+    const sups = ReportState.suppliers;
+
+    const supStats = sups.map(s => {
+        const lenses = inv.filter(l => l.supplierId === s.id);
+        const totalStock = lenses.reduce((sum, l) => sum + l.quantityInStock, 0);
+        const costValue = lenses.reduce((sum, l) => sum + (l.costPrice * l.quantityInStock), 0);
+        const sellValue = lenses.reduce((sum, l) => sum + (l.sellingPrice * l.quantityInStock), 0);
+        const lowStock = lenses.filter(l => l.quantityInStock <= l.reorderLevel).length;
+        const expiring = lenses.filter(l => daysUntil(l.expiryDate) <= 90 && daysUntil(l.expiryDate) >= 0).length;
+        return { ...s, lensCount: lenses.length, totalStock, costValue, sellValue, lowStock, expiring };
+    }).sort((a, b) => b.sellValue - a.sellValue);
+
+    const totalCostAll = supStats.reduce((s, x) => s + x.costValue, 0);
+    const totalSellAll = supStats.reduce((s, x) => s + x.sellValue, 0);
+
+    const body = `
+        <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:20px">
+            <div class="kpi-card"><div class="kpi-icon teal"><i class="fas fa-truck"></i></div><div class="kpi-value">${sups.length}</div><div class="kpi-label">Suppliers</div></div>
+            <div class="kpi-card"><div class="kpi-icon amber"><i class="fas fa-coins"></i></div><div class="kpi-value">${formatCurrency(totalCostAll)}</div><div class="kpi-label">Total Cost Value</div></div>
+            <div class="kpi-card"><div class="kpi-icon green"><i class="fas fa-dollar-sign"></i></div><div class="kpi-value">${formatCurrency(totalSellAll)}</div><div class="kpi-label">Total Sell Value</div></div>
+        </div>
+        <div id="report-chart-area" style="margin-bottom:20px"><canvas id="report-chart" height="280"></canvas></div>
+        <div class="table-container">
+            <div class="table-scroll">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Supplier</th>
+                            <th>Status</th>
+                            <th>Contact</th>
+                            <th>Lens Types</th>
+                            <th>Total Stock</th>
+                            <th>Cost Value</th>
+                            <th>Sell Value</th>
+                            <th>Margin</th>
+                            <th>Low Stock</th>
+                            <th>Expiring</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${supStats.map(s => {
+                            const margin = s.costValue > 0 ? ((s.sellValue - s.costValue) / s.costValue * 100).toFixed(1) : '0.0';
+                            return `<tr>
+                                <td><strong>${escapeHtml(s.supplierName)}</strong></td>
+                                <td><span class="badge ${s.status === 'Active' ? 'badge-green' : 'badge-red'}">${s.status}</span></td>
+                                <td style="font-size:0.75rem;color:var(--text-secondary)">${escapeHtml(s.contactPerson || '—')}</td>
+                                <td>${s.lensCount}</td>
+                                <td>${s.totalStock.toLocaleString()}</td>
+                                <td>${formatCurrency(s.costValue)}</td>
+                                <td style="font-weight:600">${formatCurrency(s.sellValue)}</td>
+                                <td style="color:${parseFloat(margin) >= 30 ? 'var(--success)' : 'var(--gold)'};font-weight:600">${margin}%</td>
+                                <td>${s.lowStock ? `<span class="badge badge-amber">${s.lowStock}</span>` : '<span style="color:var(--text-tertiary)">0</span>'}</td>
+                                <td>${s.expiring ? `<span class="badge badge-red">${s.expiring}</span>` : '<span style="color:var(--text-tertiary)">0</span>'}</td>
+                            </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+    showReportOutput('Supplier Performance Report', body);
+    renderSupplierChart(supStats);
+    ReportState.activeReport = {
+        name: 'Supplier Performance Report',
+        getCSV: () => {
+            const h = ['Supplier','Status','Contact','Lens Types','Stock','Cost Value','Sell Value','Margin %','Low Stock','Expiring'];
+            const r = supStats.map(s => {
+                const margin = s.costValue > 0 ? ((s.sellValue - s.costValue) / s.costValue * 100).toFixed(1) : '0.0';
+                return [s.supplierName,s.status,s.contactPerson||'',s.lensCount,s.totalStock,s.costValue.toFixed(2),s.sellValue.toFixed(2),margin,s.lowStock,s.expiring];
+            });
+            return [h,...r];
+        }
+    };
+}
+
+/* ─────────────────────────────────────────────
+   6. STOCK MOVEMENT REPORT
+   ───────────────────────────────────────────── */
+function showStockMovementReport() {
+    const txn = ReportState.transactions;
+    const types = ['Stock In', 'Stock Out', 'Adjustment', 'Return'];
+    const typeStats = types.map(t => {
+        const items = txn.filter(x => x.transactionType === t);
+        return { type: t, count: items.length, quantity: items.reduce((s, x) => s + x.quantity, 0) };
+    });
+
+    /* Daily movement for last 14 days */
+    const dailyMovement = [];
+    for (let i = 13; i >= 0; i--) {
+        const d = new Date(); d.setDate(d.getDate() - i);
+        const key = d.toISOString().split('T')[0];
+        const dayTxn = txn.filter(t => t.transactionDate.startsWith(key));
+        dailyMovement.push({
+            label: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+            'Stock In': dayTxn.filter(t => t.transactionType === 'Stock In').reduce((s, t) => s + t.quantity, 0),
+            'Stock Out': dayTxn.filter(t => t.transactionType === 'Stock Out').reduce((s, t) => s + t.quantity, 0),
+            'Adjustment': dayTxn.filter(t => t.transactionType === 'Adjustment').reduce((s, t) => s + t.quantity, 0),
+            'Return': dayTxn.filter(t => t.transactionType === 'Return').reduce((s, t) => s + t.quantity, 0)
+        });
+    }
+
+    const body = `
+        <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:20px">
+            ${typeStats.map(ts => {
+                const colors = { 'Stock In': 'green', 'Stock Out': 'red', 'Adjustment': 'amber', 'Return': 'cyan' };
+                const icons = { 'Stock In': 'fa-arrow-down', 'Stock Out': 'fa-arrow-up', 'Adjustment': 'fa-sliders-h', 'Return': 'fa-undo' };
+                return `<div class="kpi-card"><div class="kpi-icon ${colors[ts.type]}"><i class="fas ${icons[ts.type]}"></i></div><div class="kpi-value">${ts.count}</div><div class="kpi-label">${ts.type} (${ts.quantity} units)</div></div>`;
+            }).join('')}
+        </div>
+        <div id="report-chart-area" style="margin-bottom:20px"><canvas id="report-chart" height="300"></canvas></div>
+        <div class="table-container">
+            <div class="table-scroll">
+                <table>
+                    <thead><tr><th>Date</th><th>Reference</th><th>Lens</th><th>Type</th><th>Qty</th><th>Remarks</th></tr></thead>
+                    <tbody>
+                        ${txn.slice(0, 50).map(t => {
+                            const badge = { 'Stock In': 'badge-green', 'Stock Out': 'badge-red', 'Adjustment': 'badge-amber', 'Return': 'badge-cyan' };
+                            const prefix = (t.transactionType === 'Stock In' || t.transactionType === 'Return') ? '+' : '-';
+                            const color = (t.transactionType === 'Stock In' || t.transactionType === 'Return') ? 'var(--success)' : 'var(--danger)';
+                            return `<tr>
+                                <td style="white-space:nowrap">${formatDateTime(t.transactionDate)}</td>
+                                <td><code style="background:var(--bg-tertiary);padding:2px 6px;border-radius:4px;font-size:0.75rem">${escapeHtml(t.referenceNumber || '—')}</code></td>
+                                <td class="truncate" style="max-width:200px">${escapeHtml(t.lensInfo || '—')}</td>
+                                <td><span class="badge ${badge[t.transactionType] || 'badge-gray'}">${t.transactionType}</span></td>
+                                <td style="font-weight:600;color:${color}">${prefix}${t.quantity}</td>
+                                <td class="truncate" style="max-width:150px">${escapeHtml(t.remarks || '—')}</td>
+                            </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+            ${txn.length > 50 ? `<div class="table-footer"><span>Showing first 50 of ${txn.length} transactions</span></div>` : ''}
+        </div>
+    `;
+    showReportOutput('Stock Movement Report', body);
+    renderMovementChart(dailyMovement);
+    ReportState.activeReport = {
+        name: 'Stock Movement Report',
+        getCSV: () => {
+            const h = ['Date','Reference','Lens','Type','Quantity','Remarks'];
+            const r = txn.map(t => [formatDateTime(t.transactionDate),t.referenceNumber||'',t.lensInfo||'',t.transactionType,t.quantity,t.remarks||'']);
+            return [h,...r];
+        }
+    };
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   REPORT CHART RENDERERS
+   ═══════════════════════════════════════════════════════════════ */
+function getChartDefaults() {
+    const isDark = AppState.theme === 'dark';
+    const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+    const textColor = isDark ? '#8BA5A0' : '#4A6B65';
+    return {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+            legend: { labels: { color: textColor, font: { family: 'DM Sans', size: 12 }, padding: 14, usePointStyle: true, pointStyleWidth: 8 } },
+            tooltip: { backgroundColor: isDark ? '#1E3A34' : '#0F2A26', titleFont: { family: 'DM Sans' }, bodyFont: { family: 'DM Sans' }, padding: 10, cornerRadius: 8 }
+        },
+        scales: {
+            x: { grid: { color: gridColor }, ticks: { color: textColor, font: { family: 'DM Sans', size: 11 } } },
+            y: { grid: { color: gridColor }, ticks: { color: textColor, font: { family: 'DM Sans', size: 11 } }, beginAtZero: true }
+        }
+    };
+}
+
+function renderStockByBrandChart(inv) {
+    const canvas = document.getElementById('report-chart');
+    if (!canvas) return;
+    if (ReportState.chartInstance) ReportState.chartInstance.destroy();
+    const brandCounts = {};
+    inv.forEach(l => { brandCounts[l.brandName] = (brandCounts[l.brandName] || 0) + l.quantityInStock; });
+    const labels = Object.keys(brandCounts).sort((a, b) => brandCounts[b] - brandCounts[a]);
+    const colors = ['#0D9488','#F59E0B','#DC2626','#0891B2','#059669','#8B5CF6','#EC4899','#F97316','#6366F1','#14B8A6'];
+    ReportState.chartInstance = new Chart(canvas, {
+        type: 'bar',
+        data: { labels, datasets: [{ label: 'Stock Quantity', data: labels.map(b => brandCounts[b]), backgroundColor: labels.map((_, i) => colors[i % colors.length] + '99'), borderColor: labels.map((_, i) => colors[i % colors.length]), borderWidth: 1.5, borderRadius: 6, maxBarThickness: 50 }] },
+        options: { ...getChartDefaults(), plugins: { ...getChartDefaults().plugins, legend: { display: false } } }
+    });
+}
+
+function renderExpiryChart(inv) {
+    const canvas = document.getElementById('report-chart');
+    if (!canvas) return;
+    if (ReportState.chartInstance) ReportState.chartInstance.destroy();
+    const buckets = { 'Expired': 0, '1–30 days': 0, '31–60 days': 0, '61–90 days': 0, '91–180 days': 0, '180+ days': 0 };
+    inv.forEach(l => {
+        const d = daysUntil(l.expiryDate);
+        if (d < 0) buckets['Expired'] += l.quantityInStock;
+        else if (d <= 30) buckets['1–30 days'] += l.quantityInStock;
+        else if (d <= 60) buckets['31–60 days'] += l.quantityInStock;
+        else if (d <= 90) buckets['61–90 days'] += l.quantityInStock;
+        else if (d <= 180) buckets['91–180 days'] += l.quantityInStock;
+        else buckets['180+ days'] += l.quantityInStock;
+    });
+    const labels = Object.keys(buckets);
+    const colors = ['#DC2626','#F59E0B','#F97316','#059669','#0891B2','#0D9488'];
+    ReportState.chartInstance = new Chart(canvas, {
+        type: 'bar',
+        data: { labels, datasets: [{ label: 'Units', data: labels.map(l => buckets[l]), backgroundColor: colors.map(c => c + 'BB'), borderColor: colors, borderWidth: 1.5, borderRadius: 6, maxBarThickness: 60 }] },
+        options: { ...getChartDefaults(), plugins: { ...getChartDefaults().plugins, legend: { display: false } } }
+    });
+}
+
+function renderSalesChart(data, title) {
+    const canvas = document.getElementById('report-chart');
+    if (!canvas) return;
+    if (ReportState.chartInstance) ReportState.chartInstance.destroy();
+    ReportState.chartInstance = new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels: data.map(d => d.label),
+            datasets: [
+                {
+                    label: 'Revenue', data: data.map(d => d.revenue),
+                    borderColor: '#0D9488', backgroundColor: 'rgba(13,148,136,0.1)',
+                    fill: true, tension: 0.4, pointBackgroundColor: '#0D9488', pointRadius: 4, pointHoverRadius: 6, yAxisID: 'y'
+                },
+                {
+                    label: 'Orders', data: data.map(d => d.orders),
+                    borderColor: '#F59E0B', backgroundColor: 'transparent',
+                    borderDash: [5, 5], tension: 0.4, pointBackgroundColor: '#F59E0B', pointRadius: 3, yAxisID: 'y1'
+                }
+            ]
+        },
+        options: {
+            ...getChartDefaults(),
+            plugins: { ...getChartDefaults().plugins, title: { display: true, text: title, color: getChartDefaults().scales.x.ticks.color, font: { family: 'Space Grotesk', size: 14, weight: '600' }, padding: { bottom: 16 } } },
+            scales: {
+                x: getChartDefaults().scales.x,
+                y: { ...getChartDefaults().scales.y, position: 'left', ticks: { ...getChartDefaults().scales.y.ticks, callback: v => '$' + v } },
+                y1: { ...getChartDefaults().scales.y, position: 'right', grid: { drawOnChartArea: false }, ticks: { ...getChartDefaults().scales.y.ticks, callback: v => v + ' orders' } }
+            }
+        }
+    });
+}
+
+function renderSupplierChart(supStats) {
+    const canvas = document.getElementById('report-chart');
+    if (!canvas) return;
+    if (ReportState.chartInstance) ReportState.chartInstance.destroy();
+    const colors = ['#0D9488','#F59E0B','#0891B2','#059669','#8B5CF6','#EC4899','#F97316','#6366F1'];
+    ReportState.chartInstance = new Chart(canvas, {
+        type: 'doughnut',
+        data: {
+            labels: supStats.map(s => s.supplierName),
+            datasets: [{ data: supStats.map(s => s.sellValue), backgroundColor: supStats.map((_, i) => colors[i % colors.length] + 'CC'), borderWidth: 2, borderColor: AppState.theme === 'dark' ? '#162926' : '#fff' }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false, cutout: '55%',
+            plugins: {
+                legend: { position: 'right', labels: { color: getChartDefaults().scales.x.ticks.color, font: { family: 'DM Sans', size: 11 }, padding: 10, usePointStyle: true, pointStyleWidth: 8 } },
+                tooltip: { ...getChartDefaults().plugins.tooltip, callbacks: { label: ctx => ` ${ctx.label}: ${formatCurrency(ctx.parsed)}` } }
+            }
+        }
+    });
+}
+
+function renderMovementChart(data) {
+    const canvas = document.getElementById('report-chart');
+    if (!canvas) return;
+    if (ReportState.chartInstance) ReportState.chartInstance.destroy();
+    ReportState.chartInstance = new Chart(canvas, {
+        type: 'bar',
+        data: {
+            labels: data.map(d => d.label),
+            datasets: [
+                { label: 'Stock In', data: data.map(d => d['Stock In']), backgroundColor: 'rgba(5,150,105,0.7)', borderColor: '#059669', borderWidth: 1.5, borderRadius: 4 },
+                { label: 'Stock Out', data: data.map(d => d['Stock Out']), backgroundColor: 'rgba(220,38,38,0.7)', borderColor: '#DC2626', borderWidth: 1.5, borderRadius: 4 },
+                { label: 'Return', data: data.map(d => d['Return']), backgroundColor: 'rgba(8,145,178,0.7)', borderColor: '#0891B2', borderWidth: 1.5, borderRadius: 4 }
+            ]
+        },
+        options: {
+            ...getChartDefaults(),
+            plugins: { ...getChartDefaults().plugins, title: { display: true, text: 'Daily Stock Movement (Last 14 Days)', color: getChartDefaults().scales.x.ticks.color, font: { family: 'Space Grotesk', size: 14, weight: '600' }, padding: { bottom: 16 } } },
+            scales: { ...getChartDefaults().scales, x: { ...getChartDefaults().scales.x, stacked: false } }
+        }
+    });
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   REPORT TABLE BUILDERS
+   ═══════════════════════════════════════════════════════════════ */
+function buildInventoryTable(inv, title) {
+    return `
+        <div class="table-container">
+            <div class="table-scroll">
+                <table>
+                    <thead><tr><th>Brand</th><th>Type</th><th>Power</th><th>Side</th><th>Stock</th><th>Reorder</th><th>Cost</th><th>Selling</th><th>Supplier</th><th>Expiry</th></tr></thead>
+                    <tbody>
+                        ${inv.map(l => {
+                            const sc = l.quantityInStock === 0 ? 'badge-red' : l.quantityInStock <= l.reorderLevel ? 'badge-amber' : 'badge-green';
+                            return `<tr>
+                                <td><strong>${escapeHtml(l.brandName)}</strong></td>
+                                <td>${escapeHtml(l.lensType)}</td>
+                                <td>${l.power ?? '—'}</td>
+                                <td><span class="badge badge-cyan">${l.eyeSide || '—'}</span></td>
+                                <td><strong>${l.quantityInStock}</strong> <span class="badge ${sc}">${l.quantityInStock === 0 ? 'Out' : l.quantityInStock <= l.reorderLevel ? 'Low' : 'OK'}</span></td>
+                                <td>${l.reorderLevel}</td>
+                                <td>${formatCurrency(l.costPrice)}</td>
+                                <td>${formatCurrency(l.sellingPrice)}</td>
+                                <td class="truncate" style="max-width:120px">${escapeHtml(l.supplierName || '—')}</td>
+                                <td>${l.expiryDate || '—'}</td>
+                            </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
+function buildExpiryTable(inv) {
+    const sorted = [...inv].sort((a, b) => daysUntil(a.expiryDate) - daysUntil(b.expiryDate));
+    return `
+        <div class="table-container">
+            <div class="table-scroll">
+                <table>
+                    <thead><tr><th>Brand</th><th>Type</th><th>Batch</th><th>Expiry Date</th><th>Days Left</th><th>Stock</th><th>Cost Value</th><th>Risk</th></tr></thead>
+                    <tbody>
+                        ${sorted.map(l => {
+                            const days = daysUntil(l.expiryDate);
+                            const riskBadge = days <= 30 ? 'badge-red' : days <= 90 ? 'badge-amber' : 'badge-green';
+                            const riskText = days <= 30 ? 'Critical' : days <= 90 ? 'Warning' : 'OK';
+                            return `<tr>
+                                <td><strong>${escapeHtml(l.brandName)}</strong></td>
+                                <td>${escapeHtml(l.lensType)}</td>
+                                <td><code style="font-size:0.75rem">${escapeHtml(l.batchNumber || '—')}</code></td>
+                                <td>${l.expiryDate || '—'}</td>
+                                <td style="font-weight:600;color:${days <= 30 ? 'var(--danger)' : days <= 90 ? 'var(--gold)' : 'var(--success)'}">${days}</td>
+                                <td>${l.quantityInStock}</td>
+                                <td>${formatCurrency(l.costPrice * l.quantityInStock)}</td>
+                                <td><span class="badge ${riskBadge}">${riskText}</span></td>
+                            </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
+function buildTopCustomersTable(sales) {
+    const customerMap = {};
+    sales.forEach(s => {
+        if (!customerMap[s.customerName]) customerMap[s.customerName] = { name: s.customerName, phone: s.phoneNumber, orders: 0, total: 0, units: 0 };
+        customerMap[s.customerName].orders++;
+        customerMap[s.customerName].total += s.totalAmount;
+        customerMap[s.customerName].units += s.quantitySold;
+        if (s.phoneNumber) customerMap[s.customerName].phone = s.phoneNumber;
+    });
+    const top = Object.values(customerMap).sort((a, b) => b.total - a.total).slice(0, 10);
+    if (!top.length) return '<div class="empty-state" style="padding:24px"><div class="empty-state-desc">No sales data available</div></div>';
+    return `
+        <div class="table-container">
+            <div class="table-scroll">
+                <table>
+                    <thead><tr><th>#</th><th>Customer</th><th>Phone</th><th>Orders</th><th>Units</th><th>Total Spent</th></tr></thead>
+                    <tbody>
+                        ${top.map((c, i) => `<tr>
+                            <td style="font-weight:600;color:var(--text-tertiary)">${i + 1}</td>
+                            <td><strong>${escapeHtml(c.name)}</strong></td>
+                            <td style="color:var(--text-secondary)">${escapeHtml(c.phone || '—')}</td>
+                            <td>${c.orders}</td>
+                            <td>${c.units}</td>
+                            <td style="font-weight:600;color:var(--success)">${formatCurrency(c.total)}</td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   REPORT EXPORT FUNCTIONS
+   ═══════════════════════════════════════════════════════════════ */
+function exportCurrentReportCSV() {
+    if (!ReportState.activeReport) return;
+    const rows = ReportState.activeReport.getCSV();
+    if (!rows || !rows.length) { showToast('warning', 'No Data', 'Nothing to export'); return; }
+    const csv = rows.map(r => r.map(c => {
+        const s = String(c ?? '');
+        return s.includes(',') || s.includes('"') || s.includes('\n') ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }).join(',')).join('\n');
+    const filename = ReportState.activeReport.name.replace(/\s+/g, '_') + '.csv';
+    downloadFile(csv, filename, 'text/csv');
+    showToast('success', 'Exported', `Report exported as CSV`);
+}
+
+function exportCurrentReportExcel() {
+    if (!ReportState.activeReport) return;
+    const rows = ReportState.activeReport.getCSV();
+    if (!rows || !rows.length) { showToast('warning', 'No Data', 'Nothing to export'); return; }
+    const headers = rows[0];
+    const data = rows.slice(1).map(r => {
+        const obj = {};
+        headers.forEach((h, i) => { obj[h] = r[i] ?? ''; });
+        return obj;
+    });
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws['!cols'] = headers.map(h => ({ wch: Math.max(h.length + 2, 14) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, ReportState.activeReport.name.slice(0, 31));
+    const filename = ReportState.activeReport.name.replace(/\s+/g, '_') + '.xlsx';
+    XLSX.writeFile(wb, filename);
+    showToast('success', 'Exported', `Report exported as Excel`);
+}
+
+function printCurrentReport() {
+    const el = document.getElementById('report-body-content');
+    if (!el) return;
+    const printWin = window.open('', '_blank', 'width=900,height=700');
+    printWin.document.write(`<!DOCTYPE html><html><head><title>Report</title>
+        <style>
+            *{margin:0;padding:0;box-sizing:border-box}
+            body{font-family:'Segoe UI',sans-serif;padding:24px;color:#222;font-size:13px}
+            h2{font-size:18px;margin-bottom:16px;padding-bottom:8px;border-bottom:2px solid #0D9488}
+            .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
+            .kpi-card{border:1px solid #ddd;border-radius:8px;padding:10px;text-align:center}
+            .kpi-value{font-size:18px;font-weight:700;color:#0D9488}
+            .kpi-label{font-size:11px;color:#666}
+            table{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:12px}
+            th,td{border:1px solid #ddd;padding:6px 8px;text-align:left}
+            th{background:#f5f5f5;font-weight:600}
+            .badge{padding:1px 8px;border-radius:10px;font-size:10px;font-weight:600}
+            .badge-green{background:#d1fae5;color:#059669}
+            .badge-amber{background:#fef3c7;color:#d97706}
+            .badge-red{background:#fee2e2;color:#dc2626}
+            canvas{display:none}
+            .alerts-bar,.flex{display:none}
+            @media print{body{padding:16px}}
+        </style>
+    </head><body>
+        <h2>${ReportState.activeReport?.name || 'Report'}</h2>
+        <div style="font-size:11px;color:#999;margin-bottom:16px">Generated: ${new Date().toLocaleString()}</div>
+        ${el.innerHTML}
+    <script>window.print();<\/script>
+    </body></html>`);
+    printWin.document.close();
+}
 function exportInventoryExcel() {
   const data = AppState.inventoryData.map(l => ({
     Brand: l.brandName, Type: l.lensType, Power: l.power || '', Cylinder: l.cylinder || '',
@@ -3988,7 +4823,7 @@ async function renderUsers() {
   `;
 }
 
-async function renderReports() {
+/*async function renderReports() {
   $('#page-content').innerHTML = `
     <div class="page-header">
       <h1 class="page-title">Reports</h1>
@@ -4000,7 +4835,7 @@ async function renderReports() {
       <div class="empty-state-desc">This feature is currently under development.</div>
     </div>
   `;
-}
+}*/
 
 async function renderAuditLogs() {
   $('#page-content').innerHTML = `
