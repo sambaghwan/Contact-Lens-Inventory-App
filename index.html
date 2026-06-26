@@ -4724,6 +4724,445 @@ function printCurrentReport() {
     </body></html>`);
     printWin.document.close();
 }
+   /* ═══════════════════════════════════════════════════════════════
+   USER MANAGEMENT MODULE
+   ═══════════════════════════════════════════════════════════════ */
+
+/* --- State for users module --- */
+const UserState = {
+    data: [],
+    search: '',
+    filterRole: '',
+    filterStatus: '',
+    sortField: 'created_at',
+    sortDir: 'desc',
+    page: 1,
+    perPage: 10
+};
+
+/* --- Main render entry point --- */
+async function renderUsers() {
+    const content = $('#page-content');
+    content.innerHTML = `
+        <div class="page-header flex justify-between items-center flex-wrap gap-3">
+            <div>
+                <h1 class="page-title">User Management</h1>
+                <p class="page-desc">Manage accounts, roles, and access permissions</p>
+            </div>
+            <div class="flex gap-2 flex-wrap">
+                <button class="btn btn-secondary btn-sm" onclick="exportUsersCSV()"><i class="fas fa-file-csv"></i> CSV</button>
+                <button class="btn btn-secondary btn-sm" onclick="exportUsersExcel()"><i class="fas fa-file-excel"></i> Excel</button>
+            </div>
+        </div>
+
+        <!-- KPI cards -->
+        <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:20px" id="users-kpis">
+            <div class="skeleton skeleton-card" style="height:80px"></div>
+            <div class="skeleton skeleton-card" style="height:80px"></div>
+            <div class="skeleton skeleton-card" style="height:80px"></div>
+            <div class="skeleton skeleton-card" style="height:80px"></div>
+        </div>
+
+        <!-- Toolbar -->
+        <div class="table-toolbar">
+            <div class="table-search">
+                <i class="fas fa-search"></i>
+                <input type="text" id="user-search" placeholder="Search by name or email..." value="${escapeHtml(UserState.search)}" oninput="handleUserSearch(this.value)">
+            </div>
+            <select class="table-filter" id="user-filter-role" onchange="handleUserFilter('role', this.value)">
+                <option value="">All Roles</option>
+                <option value="Admin" ${UserState.filterRole === 'Admin' ? 'selected' : ''}>Admin</option>
+                <option value="Manager" ${UserState.filterRole === 'Manager' ? 'selected' : ''}>Manager</option>
+                <option value="Staff" ${UserState.filterRole === 'Staff' ? 'selected' : ''}>Staff</option>
+            </select>
+            <select class="table-filter" id="user-filter-status" onchange="handleUserFilter('status', this.value)">
+                <option value="">All Statuses</option>
+                <option value="Active" ${UserState.filterStatus === 'Active' ? 'selected' : ''}>Active</option>
+                <option value="Disabled" ${UserState.filterStatus === 'Disabled' ? 'selected' : ''}>Disabled</option>
+            </select>
+        </div>
+
+        <div class="table-container" id="users-table-container"></div>
+    `;
+
+    try {
+        UserState.data = await db.getProfiles();
+    } catch (err) {
+        console.error('Failed to load users:', err);
+        UserState.data = [];
+    }
+    
+    renderUserKPIs();
+    renderUserTable();
+}
+
+/* --- KPI summary cards --- */
+function renderUserKPIs() {
+    const all = UserState.data;
+    const active = all.filter(u => u.status === 'Active').length;
+    const disabled = all.filter(u => u.status === 'Disabled').length;
+    const admins = all.filter(u => u.role === 'Admin').length;
+
+    $('#users-kpis').innerHTML = `
+        <div class="kpi-card" style="animation-delay:0s">
+            <div class="kpi-icon teal"><i class="fas fa-users"></i></div>
+            <div class="kpi-value">${all.length}</div>
+            <div class="kpi-label">Total Users</div>
+            <div class="kpi-glow" style="background:var(--accent)"></div>
+        </div>
+        <div class="kpi-card" style="animation-delay:0.05s">
+            <div class="kpi-icon green"><i class="fas fa-check-circle"></i></div>
+            <div class="kpi-value">${active}</div>
+            <div class="kpi-label">Active</div>
+            <div class="kpi-glow" style="background:var(--success)"></div>
+        </div>
+        <div class="kpi-card" style="animation-delay:0.1s">
+            <div class="kpi-icon red"><i class="fas fa-ban"></i></div>
+            <div class="kpi-value">${disabled}</div>
+            <div class="kpi-label">Disabled</div>
+            <div class="kpi-glow" style="background:var(--danger)"></div>
+        </div>
+        <div class="kpi-card" style="animation-delay:0.15s">
+            <div class="kpi-icon amber"><i class="fas fa-user-shield"></i></div>
+            <div class="kpi-value">${admins}</div>
+            <div class="kpi-label">Administrators</div>
+            <div class="kpi-glow" style="background:var(--gold)"></div>
+        </div>
+    `;
+}
+
+/* --- Search & Filter handlers --- */
+const handleUserSearch = debounce(function(v) {
+    UserState.search = v;
+    UserState.page = 1;
+    renderUserTable();
+}, 250);
+
+function handleUserFilter(key, val) {
+    UserState[key] = val;
+    UserState.page = 1;
+    renderUserTable();
+}
+
+/* --- Get filtered & sorted data --- */
+function getFilteredUsers() {
+    let data = [...UserState.data];
+    const s = UserState.search.toLowerCase();
+    if (s) {
+        data = data.filter(u =>
+            u.fullName.toLowerCase().includes(s) ||
+            u.email.toLowerCase().includes(s)
+        );
+    }
+    if (UserState.filterRole) {
+        data = data.filter(u => u.role === UserState.filterRole);
+    }
+    if (UserState.filterStatus) {
+        data = data.filter(u => u.status === UserState.filterStatus);
+    }
+    const f = UserState.sortField;
+    const d = UserState.sortDir === 'asc' ? 1 : -1;
+    data.sort((a, b) => {
+        const va = (a[f] || '').toString().toLowerCase();
+        const vb = (b[f] || '').toString().toLowerCase();
+        if (va < vb) return -d;
+        if (va > vb) return d;
+        return 0;
+    });
+    return data;
+}
+
+/* --- Sort helpers --- */
+function userSortIcon(field) {
+    if (UserState.sortField !== field) return '<i class="fas fa-sort" style="opacity:0.3;font-size:10px;margin-left:4px"></i>';
+    return UserState.sortDir === 'asc'
+        ? '<i class="fas fa-sort-up" style="font-size:10px;margin-left:4px"></i>'
+        : '<i class="fas fa-sort-down" style="font-size:10px;margin-left:4px"></i>';
+}
+function sortUsers(field) {
+    if (UserState.sortField === field) UserState.sortDir = UserState.sortDir === 'asc' ? 'desc' : 'asc';
+    else { UserState.sortField = field; UserState.sortDir = 'asc'; }
+    renderUserTable();
+}
+
+/* --- Render table --- */
+function renderUserTable() {
+    const filtered = getFilteredUsers();
+    const total = filtered.length;
+    const perPage = UserState.perPage;
+    const totalPages = Math.max(1, Math.ceil(total / perPage));
+    const page = Math.min(UserState.page, totalPages);
+    const start = (page - 1) * perPage;
+    const pageData = filtered.slice(start, start + perPage);
+    const container = $('#users-table-container');
+    if (!container) return;
+
+    if (pageData.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-state-icon"><i class="fas fa-users-slash"></i></div>
+                <div class="empty-state-title">No Users Found</div>
+                <div class="empty-state-desc">Try adjusting your search or filters</div>
+            </div>`;
+        return;
+    }
+
+    /* Role and Status badge mappings */
+    const roleBadges = { 'Admin': 'badge-amber', 'Manager': 'badge-teal', 'Staff': 'badge-cyan' };
+    const roleIcons = { 'Admin': 'fa-user-shield', 'Manager': 'fa-user-tie', 'Staff': 'fa-user' };
+
+    container.innerHTML = `
+        <div class="table-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th style="cursor:pointer" onclick="sortUsers('fullName')">User ${userSortIcon('fullName')}</th>
+                        <th style="cursor:pointer" onclick="sortUsers('email')">Email ${userSortIcon('email')}</th>
+                        <th style="cursor:pointer" onclick="sortUsers('role')">Role ${userSortIcon('role')}</th>
+                        <th style="cursor:pointer" onclick="sortUsers('status')">Status ${userSortIcon('status')}</th>
+                        <th style="cursor:pointer" onclick="sortUsers('lastLogin')">Last Login ${userSortIcon('lastLogin')}</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${pageData.map(u => {
+                        const isSelf = AppState.currentUser && u.id === AppState.currentUser.id;
+                        const rBadge = roleBadges[u.role] || 'badge-gray';
+                        const rIcon = roleIcons[u.role] || 'fa-user';
+                        const sBadge = u.status === 'Active' ? 'badge-green' : 'badge-red';
+                        
+                        return `<tr style="${isSelf ? 'background:var(--accent-glow)' : ''}">
+                            <td>
+                                <div class="flex items-center gap-2">
+                                    <div style="width:32px;height:32px;border-radius:50%;background:${isSelf ? 'linear-gradient(135deg,var(--accent),#0F766E)' : 'var(--bg-tertiary)'};color:${isSelf ? '#fff' : 'var(--text-secondary)'};display:flex;align-items:center;justify-content:center;font-size:0.6875rem;font-weight:700;flex-shrink:0">
+                                        ${u.fullName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+                                    </div>
+                                    <div>
+                                        <div style="font-weight:600;font-size:0.875rem">${escapeHtml(u.fullName)} ${isSelf ? '<span style="font-size:0.6875rem;color:var(--accent);font-weight:400">(You)</span>' : ''}</div>
+                                    </div>
+                                </div>
+                            </td>
+                            <td style="color:var(--text-secondary);font-size:0.8125rem">${escapeHtml(u.email)}</td>
+                            <td><span class="badge ${rBadge}"><i class="fas ${rIcon}" style="font-size:9px;margin-right:4px"></i>${u.role}</span></td>
+                            <td><span class="badge ${sBadge}">${u.status}</span></td>
+                            <td style="color:var(--text-secondary);font-size:0.8125rem;white-space:nowrap">${u.lastLogin ? formatDateTime(u.lastLogin) : '<span style="color:var(--text-tertiary)">Never</span>'}</td>
+                            <td>
+                                <div class="action-btns">
+                                    <button class="action-btn" title="Edit User" onclick="openEditUserModal('${u.id}')"><i class="fas fa-pen"></i></button>
+                                    ${!isSelf ? `
+                                        <button class="action-btn" title="${u.status === 'Active' ? 'Disable User' : 'Activate User'}" onclick="toggleUserStatus('${u.id}', '${u.fullName}', '${u.status}')">
+                                            <i class="fas ${u.status === 'Active' ? 'fa-user-slash' : 'fa-user-check'}"></i>
+                                        </button>
+                                    ` : '<button class="action-btn" title="Cannot modify own status" disabled style="opacity:0.3;cursor:not-allowed"><i class="fas fa-lock"></i></button>'}
+                                </div>
+                            </td>
+                        </tr>`;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>
+        <div class="table-footer">
+            <span>Showing ${start + 1}–${Math.min(start + perPage, total)} of ${total} users</span>
+            <div class="pagination">
+                <button class="page-btn" ${page <= 1 ? 'disabled' : ''} onclick="goUserPage(${page - 1})"><i class="fas fa-chevron-left"></i></button>
+                ${userPaginationBtns(page, totalPages)}
+                <button class="page-btn" ${page >= totalPages ? 'disabled' : ''} onclick="goUserPage(${page + 1})"><i class="fas fa-chevron-right"></i></button>
+            </div>
+        </div>
+    `;
+}
+
+function userPaginationBtns(current, total) {
+    let btns = '';
+    const range = 2;
+    for (let i = Math.max(1, current - range); i <= Math.min(total, current + range); i++) {
+        btns += `<button class="page-btn ${i === current ? 'active' : ''}" onclick="goUserPage(${i})">${i}</button>`;
+    }
+    return btns;
+}
+function goUserPage(p) { UserState.page = p; renderUserTable(); }
+
+/* --- Quick Toggle Status (Enable/Disable) --- */
+function toggleUserStatus(id, name, currentStatus) {
+    const newStatus = currentStatus === 'Active' ? 'Disabled' : 'Active';
+    const actionText = newStatus === 'Disabled' ? 'disable' : 'activate';
+    
+    showConfirm(
+        `${newStatus === 'Disabled' ? 'Disable' : 'Activate'} User`,
+        `Are you sure you want to ${actionText} ${name}?`,
+        newStatus === 'Disabled' ? 'This user will no longer be able to sign in.' : 'This user will regain access to the system.',
+        async () => {
+            try {
+                const user = UserState.data.find(u => u.id === id);
+                await db.updateProfile(id, { ...user, status: newStatus });
+                await logAudit('STATUS_CHANGE', `${actionText.charAt(0).toUpperCase() + actionText.slice(1)}d user: ${name}`);
+                
+                /* Update local state */
+                const idx = UserState.data.findIndex(u => u.id === id);
+                if (idx !== -1) UserState.data[idx].status = newStatus;
+
+                showToast('success', `User ${newStatus}`, `${name} has been ${actionText}d`);
+                renderUserKPIs();
+                renderUserTable();
+            } catch (err) {
+                showToast('error', 'Error', err.message || 'Failed to update user status');
+            }
+        }
+    );
+}
+
+/* --- Edit User Modal --- */
+async function openEditUserModal(id) {
+    const user = UserState.data.find(u => u.id === id);
+    if (!user) return;
+
+    const isSelf = AppState.currentUser && user.id === AppState.currentUser.id;
+    const title = isSelf ? 'Edit My Profile' : `Edit User: ${user.fullName}`;
+    
+    const body = `
+        <div class="form-grid">
+            <div class="form-group full-width">
+                <label class="form-label">Full Name *</label>
+                <input type="text" class="form-input" id="edit-user-name" value="${escapeHtml(user.fullName)}" placeholder="Full name">
+            </div>
+            <div class="form-group full-width">
+                <label class="form-label">Email Address</label>
+                <input type="email" class="form-input" id="edit-user-email" value="${escapeHtml(user.email)}" readonly style="background:var(--bg-tertiary);cursor:not-allowed;opacity:0.7" title="Email cannot be changed here">
+                <div style="font-size:0.6875rem;color:var(--text-tertiary);margin-top:4px">Email is managed through the authentication system</div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Role</label>
+                <select class="form-select" id="edit-user-role" ${isSelf ? 'disabled title="You cannot change your own role"' : ''}>
+                    <option value="Staff" ${user.role === 'Staff' ? 'selected' : ''}>Staff</option>
+                    <option value="Manager" ${user.role === 'Manager' ? 'selected' : ''}>Manager</option>
+                    <option value="Admin" ${user.role === 'Admin' ? 'selected' : ''}>Admin</option>
+                </select>
+                ${isSelf ? '<div style="font-size:0.6875rem;color:var(--text-tertiary);margin-top:4px">Contact another Admin to change your role</div>' : ''}
+            </div>
+            <div class="form-group">
+                <label class="form-label">Status</label>
+                <select class="form-select" id="edit-user-status" ${isSelf ? 'disabled title="You cannot disable your own account"' : ''}>
+                    <option value="Active" ${user.status === 'Active' ? 'selected' : ''}>Active</option>
+                    <option value="Disabled" ${user.status === 'Disabled' ? 'selected' : ''}>Disabled</option>
+                </select>
+                ${isSelf ? '<div style="font-size:0.6875rem;color:var(--text-tertiary);margin-top:4px">You cannot disable your own account</div>' : ''}
+            </div>
+        </div>
+        ${!isSelf ? `
+        <div style="margin-top:16px;padding:12px;background:var(--bg-tertiary);border-radius:var(--radius-md);font-size:0.8125rem;color:var(--text-secondary);display:flex;align-items:center;gap:8px">
+            <i class="fas fa-info-circle" style="color:var(--info)"></i>
+            <span>Account created on <strong>${formatDate(user.createdDate)}</strong>. 
+            ${user.lastLogin ? `Last login: <strong>${formatDateTime(user.lastLogin)}</strong>.` : 'User has never logged in.'}</span>
+        </div>` : ''}
+    `;
+    
+    const footer = `
+        <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" id="save-user-btn">Save Changes</button>
+    `;
+    
+    openModal(title, body, footer);
+
+    /* Bind save action */
+    $('#save-user-btn').onclick = async () => {
+        const newName = $('#edit-user-name').value.trim();
+        const newRole = isSelf ? user.role : $('#edit-user-role').value;
+        const newStatus = isSelf ? user.status : $('#edit-user-status').value;
+
+        if (!newName) {
+            showToast('warning', 'Validation', 'Full name is required');
+            $('#edit-user-name').classList.add('error');
+            $('#edit-user-name').focus();
+            return;
+        }
+
+        /* Self-protection: Prevent accidental downgrade if bypassed via DOM */
+        if (isSelf && (newRole !== user.role || newStatus !== user.status)) {
+            showToast('error', 'Restricted', 'You cannot modify your own role or status');
+            return;
+        }
+
+        try {
+            await db.updateProfile(id, { ...user, fullName: newName, role: newRole, status: newStatus });
+            
+            const changes = [];
+            if (user.fullName !== newName) changes.push(`name to "${newName}"`);
+            if (user.role !== newRole) changes.push(`role to ${newRole}`);
+            if (user.status !== newStatus) changes.push(`status to ${newStatus}`);
+            
+            if (changes.length) {
+                await logAudit('UPDATE', `Updated user ${user.fullName}: ${changes.join(', ')}`);
+            }
+
+            /* Update local state */
+            const idx = UserState.data.findIndex(u => u.id === id);
+            if (idx !== -1) {
+                UserState.data[idx].fullName = newName;
+                UserState.data[idx].role = newRole;
+                UserState.data[idx].status = newStatus;
+            }
+
+            /* If user edited themselves, update header/sidebar */
+            if (isSelf) {
+                AppState.currentUser.fullName = newName;
+                $('#sidebar-username').textContent = newName;
+                $('#sidebar-avatar').textContent = newName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+            }
+
+            showToast('success', 'Updated', `User "${newName}" has been updated`);
+            closeModal();
+            renderUserKPIs();
+            renderUserTable();
+        } catch (err) {
+            showToast('error', 'Error', err.message || 'Failed to update user');
+        }
+    };
+
+    /* Remove error class on input */
+    const nameInput = document.getElementById('edit-user-name');
+    if (nameInput) nameInput.addEventListener('input', function() { this.classList.remove('error'); });
+}
+
+/* --- Export to CSV --- */
+function exportUsersCSV() {
+    const data = getFilteredUsers();
+    if (!data.length) { showToast('warning', 'No Data', 'No users to export'); return; }
+    const headers = ['Full Name', 'Email', 'Role', 'Status', 'Created Date', 'Last Login'];
+    const rows = data.map(u => [
+        `"${(u.fullName || '').replace(/"/g, '""')}"`,
+        `"${(u.email || '').replace(/"/g, '""')}"`,
+        u.role,
+        u.status,
+        u.createdDate ? new Date(u.createdDate).toLocaleDateString() : '',
+        u.lastLogin ? new Date(u.lastLogin).toLocaleString() : 'Never'
+    ]);
+    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    downloadFile(csv, 'users_export.csv', 'text/csv');
+    showToast('success', 'Exported', `${data.length} users exported as CSV`);
+}
+
+/* --- Export to Excel --- */
+function exportUsersExcel() {
+    const data = getFilteredUsers();
+    if (!data.length) { showToast('warning', 'No Data', 'No users to export'); return; }
+    const rows = data.map(u => ({
+        'Full Name': u.fullName,
+        'Email': u.email,
+        'Role': u.role,
+        'Status': u.status,
+        'Created Date': u.createdDate ? new Date(u.createdDate).toLocaleDateString() : '',
+        'Last Login': u.lastLogin ? new Date(u.lastLogin).toLocaleString() : 'Never'
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [
+        { wch: 22 }, { wch: 28 }, { wch: 12 }, 
+        { wch: 12 }, { wch: 18 }, { wch: 22 }
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Users');
+    XLSX.writeFile(wb, 'users_export.xlsx');
+    showToast('success', 'Exported', `${data.length} users exported as Excel`);
+}
 function exportInventoryExcel() {
   const data = AppState.inventoryData.map(l => ({
     Brand: l.brandName, Type: l.lensType, Power: l.power || '', Cylinder: l.cylinder || '',
@@ -4809,7 +5248,7 @@ async function renderSuppliers() {
   `;
 }*/
 
-async function renderUsers() {
+/*async function renderUsers() {
   $('#page-content').innerHTML = `
     <div class="page-header">
       <h1 class="page-title">User Management</h1>
@@ -4821,7 +5260,7 @@ async function renderUsers() {
       <div class="empty-state-desc">This feature is currently under development.</div>
     </div>
   `;
-}
+}*/
 
 /*async function renderReports() {
   $('#page-content').innerHTML = `
