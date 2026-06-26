@@ -5860,7 +5860,56 @@ document.addEventListener('DOMContentLoaded', async () => {
     showAuthCard('login-card');
   }
 });
+/* ═══════════════════════════════════════════════════════════════
+   APP INITIALIZATION (Runs on page load)
+   ═══════════════════════════════════════════════════════════════ */
+(async function initApp() {
+    /* Apply saved theme immediately */
+    applyTheme(AppState.theme);
 
+    /* Initialize Supabase or Demo mode */
+    initSupabase();
+
+    /* Check for existing session (keeps user logged in on refresh) */
+    const hasSession = await checkSession();
+    
+    if (hasSession) {
+        /* Valid session found, go straight to dashboard */
+        enterApp();
+    } else {
+        /* No session, ensure auth form is visible and app is hidden */
+        $('#auth-container').style.display = '';
+        $('#app-container').classList.remove('active');
+    }
+})();
+
+/* ── Global Search Keyboard Shortcut (/) ── */
+document.addEventListener('keydown', function(e) {
+    if (e.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) {
+        e.preventDefault();
+        const searchInput = document.getElementById('global-search-input');
+        if (searchInput) searchInput.focus();
+    }
+    if (e.key === 'Escape') {
+        closeModal();
+        const notifPanel = document.getElementById('notif-panel');
+        if (notifPanel) notifPanel.classList.remove('active');
+    }
+});
+
+/* ── Handle Auth Form Submissions ── */
+document.getElementById('login-form').addEventListener('submit', handleLogin);
+document.getElementById('register-form').addEventListener('submit', handleRegister);
+document.getElementById('forgot-form').addEventListener('submit', handleForgotPassword);
+
+/* ── Clear validation errors on input ── */
+document.querySelectorAll('.form-input').forEach(input => {
+    input.addEventListener('input', function() {
+        this.classList.remove('error');
+        const errorEl = this.closest('.form-group')?.querySelector('.form-error');
+        if (errorEl) errorEl.classList.remove('show');
+    });
+});
 </script>
 </body>
 </html>
