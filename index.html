@@ -941,7 +941,19 @@ const AppState = {
   selectedInventory: [],
   demoMode: false
 };
-
+/* --- Audit Logger --- */
+async function logAudit(action, description) {
+    if (!db) return;
+    try {
+        await db.addAuditLog({
+            userId: AppState.currentUser?.id || null,
+            actionType: action,
+            description: description
+        });
+    } catch (err) {
+        console.warn('Audit log failed:', err.message);
+    }
+}
 /* ═══════════════════════════════════════════════════════════════
    SUPABASE CLIENT INITIALIZATION
    ═══════════════════════════════════════════════════════════════ */
@@ -1431,6 +1443,7 @@ async function handleLogin(e) {
       await new Promise(r => setTimeout(r, 800));
       AppState.currentUser = { id: 'u1', email: email, fullName: email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()), role: 'Admin' };
     }
+     await logAudit('LOGIN', `${AppState.currentUser.fullName} logged in successfully`);
     enterApp();
     showToast('success', 'Welcome back', `Signed in as ${AppState.currentUser.fullName}`);
   } catch (err) {
