@@ -949,7 +949,7 @@ const AppState = {
 
 function initSupabase() {
   try {
-    if (SUPABASE_URL === 'https://rbzqjcnynkuuvipnuwwg.supabase.co' || SUPABASE_ANON_KEY === 'sb_publishable_zfomPJBB_a1Zj-r3rF1TTw_3SXTxtPw') {
+    if (SUPABASE_URL === '' || SUPABASE_ANON_KEY === '') {
       console.warn('Supabase not configured. Running in demo mode with local data.');
       AppState.demoMode = true;
       initDemoDB();
