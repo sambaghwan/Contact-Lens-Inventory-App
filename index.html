@@ -963,7 +963,7 @@ function initSupabase() {
       return;
     }
 
-    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    supabase = window.supabase.createclient(SUPABASE_URL, SUPABASE_ANON_KEY);
     db = createSupabaseDB(supabase);
     console.log('LV SUCCESS: Connected to Supabase successfully.');
     
