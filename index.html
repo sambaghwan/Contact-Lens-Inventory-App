@@ -1065,15 +1065,21 @@ function createSupabaseDB(client) {
   if (!data || data.length === 0) throw new Error('Update failed. You might not have permission to edit this user.');
   return normalizeUser(data[0]);
 },
-    async getAuditLogs() {
-      const { data, error } = await client.from('audit_logs').select('*, profiles(full_name)').order('created_at', { ascending: false }).limit(200);
-      if (error) throw error;
-      return data.map(normalizeAudit);
-    },
-    async addAuditLog(entry) {
-      await client.from('audit_logs').insert({ user_id: entry.userId, action_type: entry.actionType, description: entry.description });
-    }
-  };
+   async getAuditLogs() {
+    const { data, error } = await client.from('audit_logs').select('*').order('created_at', { ascending: false }).limit(200);
+    if (error) throw error;
+    
+    /* Safely fetch profiles to map user IDs to names without risky database joins */
+    let userMap = {};
+    try {
+        const { data: profiles } = await client.from('profiles').select('id, full_name');
+        if (profiles) profiles.forEach(p => userMap[p.id] = p.full_name);
+    } catch (e) { /* silently ignore if profiles fail to load */ }
+
+    return data.map(r => normalizeAudit({
+        ...r,
+        profiles: r.user_id && userMap[r.user_id] ? { full_name: userMap[r.user_id] } : null
+    }));
 }
 
 /* Normalize functions: Convert snake_case DB columns to camelCase */
