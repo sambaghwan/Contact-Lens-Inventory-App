@@ -949,31 +949,20 @@ const AppState = {
 
 function initSupabase() {
   try {
-    if (SUPABASE_URL === 'YOUR_SUPABASE_URL' || SUPABASE_ANON_KEY === 'YOUR_SUPABASE_ANON_KEY') {
-      console.error('LV ERROR: You forgot to replace YOUR_SUPABASE_URL or YOUR_SUPABASE_ANON_KEY');
+    if (SUPABASE_URL === '' || SUPABASE_ANON_KEY === '') {
+      console.warn('Supabase not configured. Running in demo mode with local data.');
       AppState.demoMode = true;
       initDemoDB();
       return;
     }
-    
-    if (typeof window.supabase === 'undefined') {
-      console.error('LV ERROR: Supabase library failed to load. Check your internet connection or ad-blockers.');
-      AppState.demoMode = true;
-      initDemoDB();
-      return;
-    }
-
-    supabase = window.supabase.createclient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     db = createSupabaseDB(supabase);
-    console.log('LV SUCCESS: Connected to Supabase successfully.');
-    
   } catch (e) {
-    console.error('LV ERROR: Supabase init crashed ->', e.message);
+    console.error('Supabase init failed:', e);
     AppState.demoMode = true;
     initDemoDB();
   }
 }
-
 /* ═══════════════════════════════════════════════════════════════
    DATABASE ABSTRACTION LAYER
    Supports both Supabase and in-memory demo mode
