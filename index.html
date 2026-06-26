@@ -1176,13 +1176,6 @@ function normalizeUser(r) {
     createdDate: r.created_at, lastLogin: r.last_login || null
   };
 }
-function normalizeAudit(r) {
-  return {
-    id: r.log_id, userId: r.user_id, actionType: r.action_type,
-    description: r.description, createdDate: r.created_at,
-    userName: r.profiles?.full_name || 'System'
-  };
-}
 
 /* ═══════════════════════════════════════════════════════════════
    DEMO MODE — In-memory database with sample data
