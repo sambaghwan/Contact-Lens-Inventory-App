@@ -1060,44 +1060,33 @@ function createSupabaseDB(client) {
       return data.map(normalizeUser);
     },
     async updateProfile(id, u) {
-  const { data, error } = await client.from('profiles').update({ full_name: u.fullName, role: u.role, status: u.status, updated_at: new Date().toISOString() }).eq('id', id).select();
-  if (error) throw error;
-  if (!data || data.length === 0) throw new Error('Update failed. You might not have permission to edit this user.');
-  return normalizeUser(data[0]);
-},
-  async getAuditLogs() {
-    /* Fetch logs WITHOUT any table joins to avoid relationship errors */
-    const { data: logs, error } = await client
-        .from('audit_logs')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(200);
-
-    if (error) throw error;
-    if (!logs) return [];
-
-    /* Safely fetch profiles in a separate query to map user IDs to names */
-    const userMap = {};
-    try {
+      const { data, error } = await client.from('profiles').update({ full_name: u.fullName, role: u.role, status: u.status, updated_at: new Date().toISOString() }).eq('id', id).select();
+      if (error) throw error;
+      if (!data || data.length === 0) throw new Error('Update failed. Check your permissions.');
+      return normalizeUser(data[0]);
+    },
+    async getAuditLogs() {
+      const { data: logs, error } = await client.from('audit_logs').select('*').order('created_at', { ascending: false }).limit(200);
+      if (error) throw error;
+      if (!logs) return [];
+      const userMap = {};
+      try {
         const { data: profiles } = await client.from('profiles').select('id, full_name');
-        if (profiles) {
-            profiles.forEach(p => {
-                userMap[p.id] = p.full_name;
-            });
-        }
-    } catch (e) { 
-        /* Ignore profile fetch errors, will just show 'System' */ 
-    }
-
-    /* Map the data using the safe normalizeAudit function */
-    return logs.map(log => ({
+        if (profiles) profiles.forEach(p => { userMap[p.id] = p.full_name; });
+      } catch (e) {}
+      return logs.map(log => ({
         id: log.log_id,
         userId: log.user_id,
         actionType: log.action_type,
         description: log.description,
         createdDate: log.created_at,
         userName: log.user_id ? (userMap[log.user_id] || 'Unknown User') : 'System'
-    }));
+      }));
+    },
+    async addAuditLog(entry) {
+      await client.from('audit_logs').insert({ user_id: entry.userId, action_type: entry.actionType, description: entry.description });
+    }
+  };
 }
 
 /* Normalize functions: Convert snake_case DB columns to camelCase */
