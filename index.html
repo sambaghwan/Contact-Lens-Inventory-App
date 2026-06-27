@@ -6138,6 +6138,35 @@ document.addEventListener('DOMContentLoaded', async () => {
         $('#app-container').classList.remove('active');
     }
 })();
+   /* ── FORCE MOBILE OVERFLOW FIX ── */
+function forceMobileOverflowFix() {
+  if (window.innerWidth > 768) return;
+  
+  document.querySelectorAll('.table-container, .table-scroll, .chart-wrap').forEach(el => {
+    el.style.overflowX = 'hidden';
+    el.style.maxWidth = '100%';
+    el.style.width = '100%';
+    el.style.marginLeft = '0';
+    el.style.marginRight = '0';
+    el.style.paddingLeft = '0';
+    el.style.paddingRight = '0';
+  });
+
+  /* Force all table cells to wrap text */
+  document.querySelectorAll('td').forEach(td => {
+    td.style.whiteSpace = 'normal';
+    td.style.wordBreak = 'break-word';
+    td.style.overflowWrap = 'break-word';
+    td.style.maxWidth = '100%';
+  });
+}
+
+   /* Run on load and when resizing to mobile */
+window.addEventListener('resize', forceMobileOverflowFix);
+const mobileFixObserver = new MutationObserver(forceMobileOverflowFix);
+mobileFixObserver.observe(document.getElementById('page-content'), { childList: true, subtree: true });
+mobileFixObserver.observe(document.getElementById('modal-body'), { childList: true, subtree: true });
+setTimeout(forceMobileOverflowFix, 50);
 /* ═══════════════════════════════════════════════════════════════
    MOBILE TABLE AUTO-LABELER
    Watches for table changes and adds data-label attributes
