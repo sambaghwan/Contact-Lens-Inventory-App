@@ -745,6 +745,154 @@ tr:hover td{background:var(--accent-glow)}
   .report-grid{grid-template-columns:1fr}
   .charts-grid{grid-template-columns:1fr}
 }
+  /* ── KILL HORIZONTAL SCROLL & COMPACT CARDS ── */
+  body {
+    overflow-x: hidden !important;
+  }
+  
+  .table-container,
+  .table-scroll,
+  .chart-card,
+  .modal-body > div {
+    overflow-x: hidden !important;
+    max-width: 100vw !important;
+    width: 100% !important;
+  }
+  
+  /* Make text wrap inside cards */
+  td {
+    word-break: break-word !important;
+    overflow-wrap: break-word !important;
+    font-size: 0.8125rem !important;
+    line-height: 1.4 !important;
+  }
+  
+  td::before {
+    font-size: 0.75rem !important;
+    margin-right: 12px !important;
+    min-width: 90px;
+  }
+  
+  /* Shrink the cards */
+  tr {
+    padding: 10px !important;
+    margin-bottom: 10px !important;
+  }
+  
+  /* Force badges, buttons, and icons to stay inside */
+  .badge, .action-btns, code, strong {
+    flex-shrink: 0;
+  }
+  
+  /* Truncate long emails and text instead of stretching */
+  td .truncate {
+    max-width: 100% !important;
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+  }
+  
+  /* Fix date/time columns on mobile */
+  td[style*="white-space:nowrap"] {
+    white-space: normal !important;
+  }
+  
+  /* Make KPI cards more compact */
+  .kpi-value {
+    font-size: 1.25rem !important;
+  }
+  .kpi-label {
+    font-size: 0.75rem !important;
+  }
+  
+  /* Fix modal tables (e.g., Supplier Profile, Report details) */
+  .modal .table-container,
+  .modal .table-scroll {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  
+  /* Make report cards stack cleanly */
+  .report-card {
+    padding: 16px !important;
+  }
+  .report-card-title {
+    font-size: 0.9375rem !important;
+  }
+  .report-card-desc {
+    font-size: 0.75rem !important;
+  }
+    /* ── HIDE EXPORT EXCEL ON MOBILE ── */
+  button[onclick*="Excel"] {
+    display: none !important;
+  }
+
+  /* ── REARRANGE & STACK BUTTONS ON MOBILE ── */
+  .page-header {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    text-align: center;
+    gap: 12px !important;
+  }
+  
+  /* Make action button groups stack and go full-width */
+  .page-header .flex.gap-2 {
+    flex-direction: column;
+    width: 100%;
+  }
+  .page-header .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* Make toolbar buttons and filters stack neatly */
+  .table-toolbar {
+    flex-direction: column !important;
+    gap: 8px !important;
+  }
+  .table-toolbar .btn, 
+  .table-toolbar .table-filter, 
+  .table-toolbar input[type="date"] {
+    width: 100% !important;
+    min-width: 0 !important;
+    justify-content: center;
+    box-sizing: border-box;
+  }
+
+  /* ── HIDE SPECIFIC COLUMNS TO MAKE CARDS SHORTER ── */
+  
+  /* Inventory: Hide overly technical details on small screens */
+  td[data-label="Cost Price"],
+  td[data-label="Base Curve"],
+  td[data-label="Diameter"],
+  td[data-label="Cylinder"],
+  td[data-label="Axis"] {
+    display: none !important;
+  }
+
+  /* Suppliers: Hide long text blocks */
+  td[data-label="Email"],
+  td[data-label="Address"] {
+    display: none !important;
+  }
+
+  /* Transactions: Hide reference codes and system user IDs */
+  td[data-label="Reference"],
+  td[data-label="By"] {
+    display: none !important;
+  }
+
+  /* Sales: Hide phone and unit price (total amount is enough) */
+  td[data-label="Phone"],
+  td[data-label="Unit Price"] {
+    display: none !important;
+  }
+
+  /* Users: Hide email and last login to keep cards compact */
+  td[data-label="Email"],
+  td[data-label="Last Login"] {
+    display: none !important;
+  }
 
 /* ═══════════════════════════════════════════
    ANIMATIONS
