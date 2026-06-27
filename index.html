@@ -630,7 +630,7 @@ tr:hover td{background:var(--accent-glow)}
 @media(max-width:1024px){
   .charts-grid{grid-template-columns:1fr}
 }
-@media(max-width:768px){
+@media(max-width:768px) {
   .sidebar{transform:translateX(-100%)}
   .sidebar.open{transform:translateX(0)}
   .main-content{margin-left:0}
@@ -650,11 +650,100 @@ tr:hover td{background:var(--accent-glow)}
   .modal-footer{flex-direction:column}
   .modal-footer .btn{width:100%}
   .page-title{font-size:1.25rem}
-}
-@media(max-width:480px){
-  .kpi-grid{grid-template-columns:1fr 1fr}
-  .auth-card{padding:28px 20px}
+  
+  /* ── RESPONSIVE TABLE CARDS ── */
+  .table-scroll {
+    overflow-x: visible; /* Remove horizontal scroll */
+    margin: 0 -16px; /* Stretch to screen edges */
+    padding: 0 16px;
+  }
+  table, thead, tbody, th, td, tr {
+    display: block;
+  }
+  thead {
+    position: absolute;
+    top: -9999px;
+    left: -9999px;
+  }
+  tr { 
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    margin-bottom: 12px;
+    padding: 12px;
+    background: var(--bg-card);
+    box-shadow: var(--shadow-sm);
+    transition: transform 0.2s ease;
+  }
+  tr:hover { transform: none; box-shadow: var(--shadow-md); }
+  tr:last-child { margin-bottom: 0; }
+  
+  td {
+    border: none !important;
+    border-bottom: 1px solid var(--border-light) !important;
+    padding: 8px 0 !important;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    text-align: right !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    white-space: normal !important;
+    overflow: visible !important;
+  }
+  td:last-child { border-bottom: none !important; }
+  
+  /* Inject the column name using data-label attribute */
+  td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-size: 0.8125rem;
+    margin-right: 16px;
+    flex-shrink: 0;
+    text-align: left;
+    text-transform: capitalize;
+  }
+  td > * {
+    text-align: right;
+  }
+  
+  /* Hide labels for checkboxes and action buttons */
+  td:has(.table-checkbox),
+  td:has(.action-btns) {
+    justify-content: flex-end;
+    border-bottom: none !important;
+  }
+  td:has(.table-checkbox)::before,
+  td:has(.action-btns)::before {
+    display: none;
+  }
+  
+  /* Fix table footer on mobile */
+  tfoot {
+    display: block;
+    margin-top: 8px;
+  }
+  tfoot tr {
+    display: flex;
+    justify-content: space-between;
+    background: var(--bg-tertiary);
+    font-weight: 700;
+    border: none;
+    box-shadow: none;
+    padding: 12px;
+  }
+  tfoot td {
+    border: none !important;
+    padding: 0 !important;
+  }
+  
+  /* Fix alerts bar */
+  .alerts-bar{flex-direction:column}
+  .alert-chip{width:100%;justify-content:center}
+  
+  /* Fix report grid */
   .report-grid{grid-template-columns:1fr}
+  .charts-grid{grid-template-columns:1fr}
 }
 
 /* ═══════════════════════════════════════════
@@ -5901,7 +5990,37 @@ document.addEventListener('DOMContentLoaded', async () => {
         $('#app-container').classList.remove('active');
     }
 })();
+/* ═══════════════════════════════════════════════════════════════
+   MOBILE TABLE AUTO-LABELER
+   Watches for table changes and adds data-label attributes
+   ═══════════════════════════════════════════════════════════════ */
+function applyResponsiveLabels() {
+    document.querySelectorAll('table').forEach(table => {
+        const headers = Array.from(table.querySelectorAll('thead th')).map(th => 
+            th.textContent.replace(/[\n\r]/g, ' ').replace(/\s+/g, ' ').trim()
+        );
+        if (!headers.length) return;
+        
+        table.querySelectorAll('tbody tr, tfoot tr').forEach(row => {
+            const cells = row.querySelectorAll('td');
+            cells.forEach((cell, index) => {
+                if (headers[index] && headers[index] !== '') {
+                    cell.setAttribute('data-label', headers[index]);
+                }
+            });
+        });
+    });
+}
 
+/* Watch for page changes and modal opens to apply labels dynamically */
+const tableObserver = new MutationObserver(() => {
+    applyResponsiveLabels();
+});
+tableObserver.observe(document.getElementById('page-content'), { childList: true, subtree: true });
+tableObserver.observe(document.getElementById('modal-body'), { childList: true, subtree: true });
+
+/* Run once on load just in case */
+setTimeout(applyResponsiveLabels, 100);
 /* ── Global Search Keyboard Shortcut (/) ── */
 document.addEventListener('keydown', function(e) {
     if (e.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) {
